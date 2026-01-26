@@ -1,6 +1,6 @@
 {
   "name": "genaura-sync",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Rate and sync AI skills - find the best, skip the garbage. By Genaura.",
   "type": "module",
   "bin": {
