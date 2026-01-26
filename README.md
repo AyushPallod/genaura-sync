@@ -28,6 +28,7 @@ You've got 400+ skills from Spawner, community repos, and your own custom ones. 
 
 - **5 skills claim "authentication"** — which one does your AI use?
 - **Half are garbage** — incomplete, no validations, zero sharp edges
+- **Broken links** — skills delegate to other skills that don't exist
 - **Contradictions everywhere** — one skill says "use Prisma", another says "use Drizzle"
 
 **Blind sync tools make this worse.** They dump everything and hope for the best.
@@ -35,6 +36,11 @@ You've got 400+ skills from Spawner, community repos, and your own custom ones. 
 ## The Solution
 
 Genaura Sync **rates every skill (0-100)** before syncing. You see exactly which skills are worth using, which overlap, and which to delete.
+
+**New in v1.1:** 
+- **Auto-Pruning:** `gsync sync` automatically removes stale or low-quality skills from your AI tools.
+- **Smart Filtering:** Skills can choose their targets (e.g., `targets: ["cursor"]`).
+- **Integrity Checks:** Penalizes skills that link to missing dependencies.
 
 ```bash
 npx genaura-sync rate
@@ -66,7 +72,7 @@ npm install -g genaura-sync
 
 # Or run directly
 npx genaura-sync rate        # See what you've got
-npx genaura-sync sync        # Sync the good stuff
+npx genaura-sync sync        # Sync good skills, remove bad ones
 npx genaura-sync clean       # List garbage to remove
 ```
 
@@ -85,7 +91,21 @@ Syncs to **8 AI coding tools** simultaneously:
 | **Windsurf** | `~/.windsurf/skills` |
 | **Antigravity** | `~/.antigravity/skills` |
 
-Skills are symlinked from your source (e.g., `~/.spawner/skills`), so updates propagate automatically.
+## Skill Configuration
+
+You can control where individual skills are synced by adding a `targets` list to your `skill.yaml`:
+
+```yaml
+# skill.yaml
+id: cursor-expert
+name: Cursor Expert
+description: Expert at writing .cursorrules
+targets:
+  - cursor    # Only syncs to Cursor
+  - windsurf  # And Windsurf
+```
+
+If `targets` is omitted, the skill syncs to all available tools.
 
 ## Commands
 
@@ -96,9 +116,9 @@ gsync rate -v                 # Verbose with score breakdown
 gsync rate --json             # Output as JSON for scripting
 
 # Sync (the main event)
-gsync sync                    # Rate then sync to all targets
-gsync sync --min-score 60     # Only sync skills scoring 60+
-gsync sync --dry-run          # Preview without changes
+gsync sync                    # Rate, sync, and PRUNE
+gsync sync --min-score 60     # Only sync skills scoring 60+ (removes <60)
+gsync sync --dry-run          # Preview changes
 gsync sync --no-backup        # Skip backup step
 
 # Find the best
@@ -117,10 +137,10 @@ Each skill is scored 0-100 across 4 categories:
 
 | Category | Points | What It Measures |
 |----------|--------|------------------|
-| **Identity** | 25 | Role, expertise, triggers, ownership domains |
-| **Sharp Edges** | 25 | Pitfalls documented, detection patterns, solutions |
-| **Validations** | 25 | Rules with patterns, anti-patterns documented |
-| **Collaboration** | 25 | Delegation rules, handoff triggers, compatible skills |
+| **Identity** | 25 | **Structure:** ID matches folder name.<br>**Substance:** No "TODO" placeholders in role/triggers. |
+| **Sharp Edges** | 25 | **Depth:** Solutions must be meaningful (>20 chars).<br>**Coverage:** Pitfalls documented and detected. |
+| **Validations** | 25 | **Correctness:** Regex patterns must be valid.<br>**Docs:** Non-empty `patterns.md` files. |
+| **Collaboration** | 25 | **Integrity:** Penalizes broken links to missing skills.<br>**Flow:** Clear delegation rules. |
 
 ### Quality Tiers
 
@@ -129,7 +149,7 @@ Each skill is scored 0-100 across 4 categories:
 | ⚡ **Excellent** | 80-100 | Use everywhere |
 | ✓ **Good** | 60-79 | Use, maybe improve |
 | ○ **Mediocre** | 40-59 | Use with caution |
-| ✗ **Poor** | 0-39 | Delete with `gsync clean` |
+| ✗ **Poor** | 0-39 | Automatically removed by `sync` |
 
 ## How It Works
 
@@ -138,57 +158,21 @@ Each skill is scored 0-100 across 4 categories:
 │  1. SCAN         ~/.spawner/skills, ~/.claude/skills, etc. │
 ├─────────────────────────────────────────────────────────────┤
 │  2. SCORE        Rate each skill 0-100                      │
+│                  (Checks for empty files, broken links)     │
 ├─────────────────────────────────────────────────────────────┤
 │  3. DETECT       Find overlaps, contradictions, conflicts   │
 ├─────────────────────────────────────────────────────────────┤
 │  4. RECOMMEND    "Use backend (61), skip auth-helper (23)"  │
 ├─────────────────────────────────────────────────────────────┤
-│  5. SYNC         Symlink to Claude, Cursor, Codex, etc.     │
+│  5. SYNC & PRUNE Symlink qualified skills, remove others    │
 └─────────────────────────────────────────────────────────────┘
-```
-
-## Real Example
-
-```bash
-$ gsync sync --min-score 60
-
-╔═══════════════════════════════════════╗
-║  ⚡ GENAURA SYNC                      ║
-║  Rate skills. Use the best.           ║
-╚═══════════════════════════════════════╝
-
-✔ Rated 437 skills from ~/.spawner/skills
-
-  Quality Summary
-  ───────────────────────────────────────
-  ⚡ Excellent: 23   ✓ Good: 161   ○ Mediocre: 100   ✗ Poor: 153
-  
-  Syncing 184 skills (score ≥ 60), skipping 253
-
-  Overlaps Found
-  ───────────────────────────────────────
-  "authorization" → Backend Engineering (61) vs Security (47)
-  "testing" → QA Engineering (61) vs Test Strategist (39)
-  
-  Contradictions
-  ───────────────────────────────────────
-  backend ↔ api-designer: Both claim rate-limiting, error-handling
-
-  Syncing
-  ───────────────────────────────────────
-  ✓ claude: 184 linked, 253 skipped
-  ✓ cursor: 184 linked, 253 skipped
-  ✓ codex: 184 linked, 253 skipped
-  ✓ gemini: 184 linked, 253 skipped
-
-  ⚡ Sync complete! Backup at ~/.config/genaura-sync/backups/
 ```
 
 ## Why This Exists
 
 I had 400+ skills synced everywhere. My AI kept using the wrong one — a half-baked "auth-helper" instead of the comprehensive "Backend Engineering" skill. 
 
-Existing sync tools (`skillshare`, etc.) just copy everything. No quality check. No overlap detection. No recommendations.
+Existing sync tools just copy everything. No quality check. No overlap detection. No recommendations.
 
 **Genaura Sync fixes this.** Rate first, sync smart.
 
