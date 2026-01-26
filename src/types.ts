@@ -4,6 +4,7 @@ export interface SkillYaml {
   version?: string;
   description?: string;
   category?: string;
+  targets?: string[];
   triggers?: string[];
   owns?: string[];
   tags?: string[];

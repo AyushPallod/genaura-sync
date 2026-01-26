@@ -83,11 +83,22 @@ function parseSkillDirectory(skillPath: string, source: ParsedSkill['source']): 
   const validationsContent = readFileIfExists(join(skillPath, 'validations.yaml'));
   const collaborationContent = readFileIfExists(join(skillPath, 'collaboration.yaml'));
 
-  // Check for markdown files
-  const hasPatternsMd = existsSync(join(skillPath, 'patterns.md'));
-  const hasAntiPatternsMd = existsSync(join(skillPath, 'anti-patterns.md'));
-  const hasDecisionsMd = existsSync(join(skillPath, 'decisions.md'));
-  const hasSharpEdgesMd = existsSync(join(skillPath, 'sharp-edges.md'));
+  // Check for markdown files with meaningful content (> 50 chars)
+  const hasContent = (filename: string): boolean => {
+    const filePath = join(skillPath, filename);
+    try {
+      if (!existsSync(filePath)) return false;
+      const stats = statSync(filePath);
+      return stats.size > 50;
+    } catch {
+      return false;
+    }
+  };
+
+  const hasPatternsMd = hasContent('patterns.md');
+  const hasAntiPatternsMd = hasContent('anti-patterns.md');
+  const hasDecisionsMd = hasContent('decisions.md');
+  const hasSharpEdgesMd = hasContent('sharp-edges.md');
 
   return {
     id: skillYaml.id,

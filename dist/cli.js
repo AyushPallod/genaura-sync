@@ -288,7 +288,8 @@ program
             });
             const status = result.errors.length > 0 ? chalk.yellow('!') : brand.cyan('✓');
             const dryLabel = options.dryRun ? brand.dim(' (dry-run)') : '';
-            console.log(`  ${status} ${target.name}: ${brand.purple('synced')} (${result.linked} linked, ${result.skipped} skipped, ${result.updated} updated)${dryLabel}`);
+            const removedText = result.removed > 0 ? chalk.red(`, removed ${result.removed}`) : '';
+            console.log(`  ${status} ${target.name}: ${brand.purple('synced')} (${result.linked} linked, ${result.skipped} skipped, ${result.updated} updated${removedText})${dryLabel}`);
             if (result.errors.length > 0) {
                 result.errors.slice(0, 3).forEach(err => {
                     console.log(brand.dim(`      ${err}`));

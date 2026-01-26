@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync, symlinkSync, unlinkSync, cpSync, readlinkSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, statSync, lstatSync, symlinkSync, unlinkSync, cpSync, readlinkSync, rmSync } from 'fs';
 import { join } from 'path';
 const TARGET_CONFIGS = [
     { name: 'claude', path: '.claude/skills' },
@@ -171,12 +171,42 @@ export function syncSkillsToTarget(skills, target, options = {}) {
         linked: 0,
         skipped: 0,
         updated: 0,
+        removed: 0,
         errors: [],
     };
     const minScore = options.minScore ?? 0; // Default: sync all
     // Ensure target directory exists
     if (!options.dryRun) {
         mkdirSync(target.path, { recursive: true });
+    }
+    // PRUNING: Remove stale links (skills not in the qualified list)
+    if (target.exists) {
+        try {
+            const entries = readdirSync(target.path);
+            const qualifiedIds = new Set(skills.map(s => s.id));
+            for (const entry of entries) {
+                // Skip if this entry is in our qualified list (will be handled by linking logic below)
+                if (qualifiedIds.has(entry))
+                    continue;
+                const entryPath = join(target.path, entry);
+                try {
+                    const stat = lstatSync(entryPath);
+                    // Only remove symlinks automatically. Real directories might be user-managed.
+                    if (stat.isSymbolicLink()) {
+                        if (!options.dryRun) {
+                            unlinkSync(entryPath);
+                        }
+                        result.removed++;
+                    }
+                }
+                catch (e) {
+                    // Ignore errors checking/removing stale entries
+                }
+            }
+        }
+        catch (e) {
+            result.errors.push(`Pruning failed: ${e instanceof Error ? e.message : 'unknown'}`);
+        }
     }
     for (const skill of skills) {
         // Skip low quality skills if threshold set

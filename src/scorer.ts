@@ -1,9 +1,14 @@
+import { basename } from 'path';
 import type { ParsedSkill, QualityScore, ScoredSkill } from './types.js';
+
+interface ScoringContext {
+  allSkillIds: Set<string>;
+}
 
 interface ScoringCriteria {
   name: string;
   maxPoints: number;
-  evaluate: (skill: ParsedSkill) => { points: number; reason: string };
+  evaluate: (skill: ParsedSkill, context?: ScoringContext) => { points: number; reason: string };
 }
 
 // Safely convert any value to an array
@@ -17,13 +22,19 @@ function toArray(value: unknown): any[] {
 // Identity scoring (0-25 points)
 const identityCriteria: ScoringCriteria[] = [
   {
-    name: 'Has defined role',
+    name: 'Structure & Integrity',
     maxPoints: 5,
     evaluate: (skill) => {
+      let points = 0;
+      const folderName = basename(skill.path);
+      if (skill.id === folderName) points += 2;
+      
       const role = skill.skillYaml?.identity?.role;
-      if (!role) return { points: 0, reason: 'No role defined' };
-      if (String(role).length > 50) return { points: 5, reason: 'Clear, detailed role' };
-      return { points: 3, reason: 'Basic role defined' };
+      if (role && role.length > 10 && !role.toLowerCase().includes('todo')) {
+        points += 3;
+        return { points, reason: 'ID matches folder & role defined' };
+      }
+      return { points, reason: 'Partial structure match' };
     }
   },
   {
@@ -32,6 +43,7 @@ const identityCriteria: ScoringCriteria[] = [
     evaluate: (skill) => {
       const expertise = toArray(skill.skillYaml?.identity?.expertise);
       if (expertise.length === 0) return { points: 0, reason: 'No expertise listed' };
+      if (expertise.some((e: string) => e.toLowerCase().includes('todo'))) return { points: 1, reason: 'Expertise contains placeholders' };
       if (expertise.length >= 5) return { points: 5, reason: `${expertise.length} expertise areas` };
       return { points: expertise.length, reason: `${expertise.length} expertise areas` };
     }
@@ -51,19 +63,25 @@ const identityCriteria: ScoringCriteria[] = [
     maxPoints: 5,
     evaluate: (skill) => {
       const triggers = toArray(skill.skillYaml?.triggers);
-      if (triggers.length === 0) return { points: 0, reason: 'No triggers - how do users invoke this?' };
-      if (triggers.length >= 5) return { points: 5, reason: `${triggers.length} activation triggers` };
-      return { points: triggers.length, reason: `${triggers.length} triggers` };
+      const validTriggers = triggers.filter((t: string) => t.length > 2);
+      if (validTriggers.length === 0) return { points: 0, reason: 'No valid triggers' };
+      if (validTriggers.length >= 5) return { points: 5, reason: `${validTriggers.length} activation triggers` };
+      return { points: validTriggers.length, reason: `${validTriggers.length} triggers` };
     }
   },
   {
-    name: 'Has ownership domains',
+    name: 'Scope Definition',
     maxPoints: 5,
     evaluate: (skill) => {
       const owns = toArray(skill.skillYaml?.owns);
-      if (owns.length === 0) return { points: 0, reason: 'No ownership defined - unclear scope' };
-      if (owns.length >= 3) return { points: 5, reason: `Owns ${owns.length} domains` };
-      return { points: owns.length * 2, reason: `Owns ${owns.length} domains` };
+      const desc = skill.skillYaml?.description || '';
+      
+      let points = 0;
+      if (owns.length > 0) points += 3;
+      if (desc.length > 20 && !desc.toLowerCase().includes('todo')) points += 2;
+      
+      if (points === 0) return { points: 0, reason: 'No ownership or description' };
+      return { points, reason: 'Scope defined' };
     }
   },
 ];
@@ -100,11 +118,15 @@ const sharpEdgesCriteria: ScoringCriteria[] = [
     evaluate: (skill) => {
       const edgeList = toArray(skill.sharpEdgesYaml?.edges);
       if (edgeList.length === 0) return { points: 0, reason: 'No edges to evaluate' };
-      const withSolution = edgeList.filter((e: any) => e?.solution && String(e.solution).length > 20);
+      const withSolution = edgeList.filter((e: any) => 
+        e?.solution && 
+        String(e.solution).length > 20 &&
+        !String(e.solution).toLowerCase().includes('todo')
+      );
       const ratio = withSolution.length / edgeList.length;
       return { 
         points: Math.round(ratio * 5), 
-        reason: `${withSolution.length}/${edgeList.length} edges have solutions`
+        reason: `${withSolution.length}/${edgeList.length} edges have meaningful solutions`
       };
     }
   },
@@ -136,11 +158,21 @@ const validationsCriteria: ScoringCriteria[] = [
     evaluate: (skill) => {
       const validationList = toArray(skill.validationsYaml?.validations);
       if (validationList.length === 0) return { points: 0, reason: 'No validations' };
-      const withPattern = validationList.filter((v: any) => v?.pattern && String(v.pattern).length > 5);
-      const ratio = withPattern.length / validationList.length;
+      
+      const withValidPattern = validationList.filter((v: any) => {
+        if (!v?.pattern || String(v.pattern).length < 5) return false;
+        try {
+          new RegExp(v.pattern);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      
+      const ratio = withValidPattern.length / validationList.length;
       return { 
         points: Math.round(ratio * 8), 
-        reason: `${withPattern.length}/${validationList.length} have detection patterns`
+        reason: `${withValidPattern.length}/${validationList.length} have valid regex patterns`
       };
     }
   },
@@ -191,13 +223,24 @@ const collaborationCriteria: ScoringCriteria[] = [
     }
   },
   {
-    name: 'Has pairs_with defined',
+    name: 'Referential Integrity (Broken Links)',
     maxPoints: 5,
-    evaluate: (skill) => {
-      const pairs = toArray(skill.skillYaml?.pairs_with);
-      if (pairs.length === 0) return { points: 0, reason: 'No compatible skills listed' };
-      if (pairs.length >= 3) return { points: 5, reason: `Works with ${pairs.length} skills` };
-      return { points: pairs.length * 2, reason: `Works with ${pairs.length} skills` };
+    evaluate: (skill, context) => {
+      if (!context) return { points: 5, reason: 'Context missing (skipped check)' };
+      
+      const delegates = toArray(skill.collaborationYaml?.delegates_to);
+      if (delegates.length === 0) return { points: 5, reason: 'No delegates to check' };
+
+      const brokenLinks = delegates.filter((d: any) => d?.skill_id && !context.allSkillIds.has(d.skill_id));
+      
+      if (brokenLinks.length > 0) {
+        return { 
+          points: 0, 
+          reason: `Broken links to: ${brokenLinks.map((d: any) => d.skill_id).join(', ')}` 
+        };
+      }
+      
+      return { points: 5, reason: 'All delegates exist' };
     }
   },
   {
@@ -220,13 +263,13 @@ const collaborationCriteria: ScoringCriteria[] = [
   },
 ];
 
-function evaluateCategory(skill: ParsedSkill, criteria: ScoringCriteria[]): { score: number; gaps: string[]; strengths: string[] } {
+function evaluateCategory(skill: ParsedSkill, criteria: ScoringCriteria[], context?: ScoringContext): { score: number; gaps: string[]; strengths: string[] } {
   let score = 0;
   const gaps: string[] = [];
   const strengths: string[] = [];
 
   for (const criterion of criteria) {
-    const result = criterion.evaluate(skill);
+    const result = criterion.evaluate(skill, context);
     score += result.points;
     
     if (result.points === 0) {
@@ -239,12 +282,12 @@ function evaluateCategory(skill: ParsedSkill, criteria: ScoringCriteria[]): { sc
   return { score, gaps, strengths };
 }
 
-export function scoreSkill(skill: ParsedSkill): ScoredSkill {
+export function scoreSkill(skill: ParsedSkill, context?: ScoringContext): ScoredSkill {
   try {
-    const identity = evaluateCategory(skill, identityCriteria);
-    const sharpEdges = evaluateCategory(skill, sharpEdgesCriteria);
-    const validations = evaluateCategory(skill, validationsCriteria);
-    const collaboration = evaluateCategory(skill, collaborationCriteria);
+    const identity = evaluateCategory(skill, identityCriteria, context);
+    const sharpEdges = evaluateCategory(skill, sharpEdgesCriteria, context);
+    const validations = evaluateCategory(skill, validationsCriteria, context);
+    const collaboration = evaluateCategory(skill, collaborationCriteria, context);
 
     const total = identity.score + sharpEdges.score + validations.score + collaboration.score;
     const allGaps = [...identity.gaps, ...sharpEdges.gaps, ...validations.gaps, ...collaboration.gaps];
@@ -280,7 +323,12 @@ export function scoreSkill(skill: ParsedSkill): ScoredSkill {
 }
 
 export function scoreAllSkills(skills: ParsedSkill[]): ScoredSkill[] {
-  return skills.map(scoreSkill).sort((a, b) => b.score.total - a.score.total);
+  // Create context with all skill IDs
+  const context: ScoringContext = {
+    allSkillIds: new Set(skills.map(s => s.id))
+  };
+
+  return skills.map(s => scoreSkill(s, context)).sort((a, b) => b.score.total - a.score.total);
 }
 
 export function getTier(score: number): 'excellent' | 'good' | 'mediocre' | 'poor' {

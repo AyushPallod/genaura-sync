@@ -1,3 +1,4 @@
+import { basename } from 'path';
 // Safely convert any value to an array
 function toArray(value) {
     if (!value)
@@ -11,15 +12,19 @@ function toArray(value) {
 // Identity scoring (0-25 points)
 const identityCriteria = [
     {
-        name: 'Has defined role',
+        name: 'Structure & Integrity',
         maxPoints: 5,
         evaluate: (skill) => {
+            let points = 0;
+            const folderName = basename(skill.path);
+            if (skill.id === folderName)
+                points += 2;
             const role = skill.skillYaml?.identity?.role;
-            if (!role)
-                return { points: 0, reason: 'No role defined' };
-            if (String(role).length > 50)
-                return { points: 5, reason: 'Clear, detailed role' };
-            return { points: 3, reason: 'Basic role defined' };
+            if (role && role.length > 10 && !role.toLowerCase().includes('todo')) {
+                points += 3;
+                return { points, reason: 'ID matches folder & role defined' };
+            }
+            return { points, reason: 'Partial structure match' };
         }
     },
     {
@@ -29,6 +34,8 @@ const identityCriteria = [
             const expertise = toArray(skill.skillYaml?.identity?.expertise);
             if (expertise.length === 0)
                 return { points: 0, reason: 'No expertise listed' };
+            if (expertise.some((e) => e.toLowerCase().includes('todo')))
+                return { points: 1, reason: 'Expertise contains placeholders' };
             if (expertise.length >= 5)
                 return { points: 5, reason: `${expertise.length} expertise areas` };
             return { points: expertise.length, reason: `${expertise.length} expertise areas` };
@@ -51,23 +58,28 @@ const identityCriteria = [
         maxPoints: 5,
         evaluate: (skill) => {
             const triggers = toArray(skill.skillYaml?.triggers);
-            if (triggers.length === 0)
-                return { points: 0, reason: 'No triggers - how do users invoke this?' };
-            if (triggers.length >= 5)
-                return { points: 5, reason: `${triggers.length} activation triggers` };
-            return { points: triggers.length, reason: `${triggers.length} triggers` };
+            const validTriggers = triggers.filter((t) => t.length > 2);
+            if (validTriggers.length === 0)
+                return { points: 0, reason: 'No valid triggers' };
+            if (validTriggers.length >= 5)
+                return { points: 5, reason: `${validTriggers.length} activation triggers` };
+            return { points: validTriggers.length, reason: `${validTriggers.length} triggers` };
         }
     },
     {
-        name: 'Has ownership domains',
+        name: 'Scope Definition',
         maxPoints: 5,
         evaluate: (skill) => {
             const owns = toArray(skill.skillYaml?.owns);
-            if (owns.length === 0)
-                return { points: 0, reason: 'No ownership defined - unclear scope' };
-            if (owns.length >= 3)
-                return { points: 5, reason: `Owns ${owns.length} domains` };
-            return { points: owns.length * 2, reason: `Owns ${owns.length} domains` };
+            const desc = skill.skillYaml?.description || '';
+            let points = 0;
+            if (owns.length > 0)
+                points += 3;
+            if (desc.length > 20 && !desc.toLowerCase().includes('todo'))
+                points += 2;
+            if (points === 0)
+                return { points: 0, reason: 'No ownership or description' };
+            return { points, reason: 'Scope defined' };
         }
     },
 ];
@@ -107,11 +119,13 @@ const sharpEdgesCriteria = [
             const edgeList = toArray(skill.sharpEdgesYaml?.edges);
             if (edgeList.length === 0)
                 return { points: 0, reason: 'No edges to evaluate' };
-            const withSolution = edgeList.filter((e) => e?.solution && String(e.solution).length > 20);
+            const withSolution = edgeList.filter((e) => e?.solution &&
+                String(e.solution).length > 20 &&
+                !String(e.solution).toLowerCase().includes('todo'));
             const ratio = withSolution.length / edgeList.length;
             return {
                 points: Math.round(ratio * 5),
-                reason: `${withSolution.length}/${edgeList.length} edges have solutions`
+                reason: `${withSolution.length}/${edgeList.length} edges have meaningful solutions`
             };
         }
     },
@@ -146,11 +160,21 @@ const validationsCriteria = [
             const validationList = toArray(skill.validationsYaml?.validations);
             if (validationList.length === 0)
                 return { points: 0, reason: 'No validations' };
-            const withPattern = validationList.filter((v) => v?.pattern && String(v.pattern).length > 5);
-            const ratio = withPattern.length / validationList.length;
+            const withValidPattern = validationList.filter((v) => {
+                if (!v?.pattern || String(v.pattern).length < 5)
+                    return false;
+                try {
+                    new RegExp(v.pattern);
+                    return true;
+                }
+                catch {
+                    return false;
+                }
+            });
+            const ratio = withValidPattern.length / validationList.length;
             return {
                 points: Math.round(ratio * 8),
-                reason: `${withPattern.length}/${validationList.length} have detection patterns`
+                reason: `${withValidPattern.length}/${validationList.length} have valid regex patterns`
             };
         }
     },

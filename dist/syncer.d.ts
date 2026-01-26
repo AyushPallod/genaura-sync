@@ -9,6 +9,7 @@ export interface SyncResult {
     linked: number;
     skipped: number;
     updated: number;
+    removed: number;
     errors: string[];
 }
 export interface BackupResult {
